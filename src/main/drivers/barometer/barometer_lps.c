@@ -190,17 +190,17 @@ static uint32_t rawP = 0;
 static uint16_t rawT = 0;
 
 bool lpsWriteCommand(busDevice_t *busdev, uint8_t cmd, uint8_t byte) {
-    return spiBusWriteRegister(busdev, cmd, byte);
+    return spiWriteReg(busdev, cmd, byte);
 }
 
 bool lpsReadCommand(busDevice_t *busdev, uint8_t cmd, uint8_t *data, uint8_t len) {
-    return spiBusReadRegisterBuffer(busdev, cmd | 0x80 | 0x40, data, len);
+    return spiReadRegBuf(busdev, cmd | 0x80 | 0x40, data, len);
 }
 
 bool lpsWriteVerify(busDevice_t *busdev, uint8_t cmd, uint8_t byte) {
     uint8_t temp = 0xff;
-    spiBusWriteRegister(busdev, cmd, byte);
-    spiBusReadRegisterBuffer(busdev, cmd, &temp, 1);
+    spiWriteReg(busdev, cmd, byte);
+    spiReadRegBuf(busdev, cmd, &temp, 1);
     if (byte == temp) return true;
     return false;
 }
@@ -221,10 +221,10 @@ static void lps_nothing(baroDev_t *baro) {
 
 static void lps_read(baroDev_t *baro) {
     uint8_t status = 0x00;
-    lpsReadCommand(&baro->busdev, LPS_STATUS, &status, 1);
+    lpsReadCommand(&baro->dev, LPS_STATUS, &status, 1);
     if (status & 0x03) {
         uint8_t temp[5];
-        lpsReadCommand(&baro->busdev, LPS_OUT_XL, temp, 5);
+        lpsReadCommand(&baro->dev, LPS_OUT_XL, temp, 5);
         /* Build the raw data */
         rawP = temp[0] | (temp[1] << 8) | (temp[2] << 16) | ((temp[2] & 0x80) ? 0xff000000 : 0);
         rawT = (temp[4] << 8) | temp[3];
@@ -241,13 +241,13 @@ static void lps_calculate(int32_t *pressure, int32_t *temperature) {
 
 bool lpsDetect(baroDev_t *baro) {
     //Detect
-    busDevice_t *busdev = &baro->busdev;
-    IOInit(busdev->busdev_u.spi.csnPin, OWNER_BARO_CS, 0);
-    IOConfigGPIO(busdev->busdev_u.spi.csnPin, IOCFG_OUT_PP);
-    IOHi(busdev->busdev_u.spi.csnPin); // Disable
-    spiSetDivisor(busdev->busdev_u.spi.instance, SPI_CLOCK_STANDARD); // Baro can work only on up to 10Mhz SPI bus
+    busDevice_t *busdev = &baro->dev;
+    IOInit(busdev->busType_u.spi.csnPin, OWNER_BARO_CS, 0);
+    IOConfigGPIO(busdev->busType_u.spi.csnPin, IOCFG_OUT_PP);
+    IOHi(busdev->busType_u.spi.csnPin); // Disable
+    spiSetDivisor(busdev->busType_u.spi.instance, SPI_CLOCK_STANDARD); // Baro can work only on up to 10Mhz SPI bus
     uint8_t temp = 0x00;
-    lpsReadCommand(&baro->busdev, LPS_WHO_AM_I, &temp, 1);
+    lpsReadCommand(&baro->dev, LPS_WHO_AM_I, &temp, 1);
     if (temp != LPS25_ID && temp != LPS22_ID && temp != LPS33_ID && temp != LPS35_ID) {
         return false;
     }

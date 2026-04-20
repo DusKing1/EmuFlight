@@ -26,16 +26,16 @@
 #include "drivers/io_types.h"
 
 typedef enum {
-    BUSTYPE_NONE = 0,
-    BUSTYPE_I2C,
-    BUSTYPE_SPI,
-    BUSTYPE_MPU_SLAVE // Slave I2C on SPI master
+    BUS_TYPE_NONE = 0,
+    BUS_TYPE_I2C,
+    BUS_TYPE_SPI,
+    BUS_TYPE_MPU_SLAVE // Slave I2C on SPI master
 } busType_e;
 
 typedef struct busDevice_s {
-    busType_e bustype;
+    busType_e busType;
     union {
-        struct deviceSpi_s {
+        struct busSpi_s {
             SPI_TypeDef *instance;
 #if defined(USE_HAL_DRIVER)
             SPI_HandleTypeDef* handle; // cached here for efficiency
@@ -46,15 +46,15 @@ typedef struct busDevice_s {
             IO_t rstPin;
 #endif
         } spi;
-        struct deviceI2C_s {
+        struct busI2C_s {
             I2CDevice device;
             uint8_t address;
         } i2c;
-        struct deviceMpuSlave_s {
+        struct busMpuSlave_s {
             const struct busDevice_s *master;
             uint8_t address;
         } mpuSlave;
-    } busdev_u;
+    } busType_u;
 } busDevice_t;
 
 #ifdef TARGET_BUS_INIT
@@ -64,3 +64,10 @@ void targetBusInit(void);
 bool busWriteRegister(const busDevice_t *bus, uint8_t reg, uint8_t data);
 bool busReadRegisterBuffer(const busDevice_t *bus, uint8_t reg, uint8_t *data, uint8_t length);
 uint8_t busReadRegister(const busDevice_t *bus, uint8_t reg);
+
+// Betaflight paste-and-tweak alias. In BF master, extDevice_t is a separate
+// per-device struct pointing at a shared busDevice_s. EmuFlight has not yet
+// split the bus resource from the device; extDevice_t is a typedef so driver
+// code written against BF signatures compiles against our combined struct.
+// Splitting the shared-bus resource is a future refactor stage.
+typedef busDevice_t extDevice_t;

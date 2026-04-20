@@ -76,7 +76,7 @@ void pgResetFn_compassConfig(compassConfig_t *compassConfig) {
 // 2. I2C devices are will be handled by address = 0 (per device default).
 // 3. Slave I2C device on SPI gyro
 #if defined(USE_SPI) && (defined(USE_MAG_SPI_HMC5883) || defined(USE_MAG_SPI_AK8963))
-    compassConfig->mag_bustype = BUSTYPE_SPI;
+    compassConfig->mag_bustype = BUS_TYPE_SPI;
 #ifdef USE_MAG_SPI_HMC5883
     compassConfig->mag_spi_device = SPI_DEV_TO_CFG(spiDeviceByInstance(HMC5883_SPI_INSTANCE));
     compassConfig->mag_spi_csn = IO_TAG(HMC5883_CS_PIN);
@@ -87,20 +87,20 @@ void pgResetFn_compassConfig(compassConfig_t *compassConfig) {
     compassConfig->mag_i2c_device = I2C_DEV_TO_CFG(I2CINVALID);
     compassConfig->mag_i2c_address = 0;
 #elif defined(USE_MAG_HMC5883) || defined(USE_MAG_QMC5883) || defined(USE_MAG_AK8975) || (defined(USE_MAG_AK8963) && !(defined(USE_GYRO_SPI_MPU6500) || defined(USE_GYRO_SPI_MPU9250)))
-    compassConfig->mag_bustype = BUSTYPE_I2C;
+    compassConfig->mag_bustype = BUS_TYPE_I2C;
     compassConfig->mag_i2c_device = I2C_DEV_TO_CFG(MAG_I2C_INSTANCE);
     compassConfig->mag_i2c_address = 0;
     compassConfig->mag_spi_device = SPI_DEV_TO_CFG(SPIINVALID);
     compassConfig->mag_spi_csn = IO_TAG_NONE;
 #elif defined(USE_MAG_AK8963) && (defined(USE_GYRO_SPI_MPU6500) || defined(USE_GYRO_SPI_MPU9250))
-    compassConfig->mag_bustype = BUSTYPE_MPU_SLAVE;
+    compassConfig->mag_bustype = BUS_TYPE_MPU_SLAVE;
     compassConfig->mag_i2c_device = I2C_DEV_TO_CFG(I2CINVALID);
     compassConfig->mag_i2c_address = 0;
     compassConfig->mag_spi_device = SPI_DEV_TO_CFG(SPIINVALID);
     compassConfig->mag_spi_csn = IO_TAG_NONE;
 #else
     compassConfig->mag_hardware = MAG_NONE;
-    compassConfig->mag_bustype = BUSTYPE_NONE;
+    compassConfig->mag_bustype = BUS_TYPE_NONE;
     compassConfig->mag_i2c_device = I2C_DEV_TO_CFG(I2CINVALID);
     compassConfig->mag_i2c_address = 0;
     compassConfig->mag_spi_device = SPI_DEV_TO_CFG(SPIINVALID);
@@ -117,31 +117,31 @@ static uint8_t magInit = 0;
 #if !defined(SIMULATOR_BUILD)
 bool compassDetect(magDev_t *dev) {
     magSensor_e magHardware = MAG_NONE;
-    busDevice_t *busdev = &dev->busdev;
+    busDevice_t *busdev = &dev->dev;
 #ifdef USE_MAG_DATA_READY_SIGNAL
     dev->magIntExtiTag = compassConfig()->interruptTag;
 #endif
     switch (compassConfig()->mag_bustype) {
 #ifdef USE_I2C
-    case BUSTYPE_I2C:
-        busdev->bustype = BUSTYPE_I2C;
-        busdev->busdev_u.i2c.device = I2C_CFG_TO_DEV(compassConfig()->mag_i2c_device);
-        busdev->busdev_u.i2c.address = compassConfig()->mag_i2c_address;
+    case BUS_TYPE_I2C:
+        busdev->busType = BUS_TYPE_I2C;
+        busdev->busType_u.i2c.device = I2C_CFG_TO_DEV(compassConfig()->mag_i2c_device);
+        busdev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
 #endif
         break;
 #ifdef USE_SPI
-    case BUSTYPE_SPI:
-        busdev->bustype = BUSTYPE_SPI;
+    case BUS_TYPE_SPI:
+        busdev->busType = BUS_TYPE_SPI;
         spiBusSetInstance(busdev, spiInstanceByDevice(SPI_CFG_TO_DEV(compassConfig()->mag_spi_device)));
-        busdev->busdev_u.spi.csnPin = IOGetByTag(compassConfig()->mag_spi_csn);
+        busdev->busType_u.spi.csnPin = IOGetByTag(compassConfig()->mag_spi_csn);
 #endif
         break;
 #if defined(USE_MAG_AK8963) && (defined(USE_GYRO_SPI_MPU6500) || defined(USE_GYRO_SPI_MPU9250))
-    case BUSTYPE_MPU_SLAVE: {
+    case BUS_TYPE_MPU_SLAVE: {
         if (gyroMpuDetectionResult()->sensor == MPU_9250_SPI) {
-            busdev->bustype = BUSTYPE_MPU_SLAVE;
-            busdev->busdev_u.mpuSlave.master = gyroSensorBus();
-            busdev->busdev_u.mpuSlave.address = compassConfig()->mag_i2c_address;
+            busdev->busType = BUS_TYPE_MPU_SLAVE;
+            busdev->busType_u.mpuSlave.master = gyroSensorBus();
+            busdev->busType_u.mpuSlave.address = compassConfig()->mag_i2c_address;
         } else {
             return false;
         }
@@ -157,8 +157,8 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_HMC5883:
 #if defined(USE_MAG_HMC5883) || defined(USE_MAG_SPI_HMC5883)
-        if (busdev->bustype == BUSTYPE_I2C) {
-            busdev->busdev_u.i2c.address = compassConfig()->mag_i2c_address;
+        if (busdev->busType == BUS_TYPE_I2C) {
+            busdev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (hmc5883lDetect(dev)) {
 #ifdef MAG_HMC5883_ALIGN
@@ -171,8 +171,8 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_QMC5883:
 #ifdef USE_MAG_QMC5883
-        if (busdev->bustype == BUSTYPE_I2C) {
-            busdev->busdev_u.i2c.address = compassConfig()->mag_i2c_address;
+        if (busdev->busType == BUS_TYPE_I2C) {
+            busdev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (qmc5883lDetect(dev)) {
 #ifdef MAG_QMC5883L_ALIGN
@@ -185,8 +185,8 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_AK8975:
 #ifdef USE_MAG_AK8975
-        if (busdev->bustype == BUSTYPE_I2C) {
-            busdev->busdev_u.i2c.address = compassConfig()->mag_i2c_address;
+        if (busdev->busType == BUS_TYPE_I2C) {
+            busdev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (ak8975Detect(dev)) {
 #ifdef MAG_AK8975_ALIGN
@@ -199,13 +199,13 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_AK8963:
 #if defined(USE_MAG_AK8963) || defined(USE_MAG_SPI_AK8963)
-        if (busdev->bustype == BUSTYPE_I2C) {
-            busdev->busdev_u.i2c.address = compassConfig()->mag_i2c_address;
+        if (busdev->busType == BUS_TYPE_I2C) {
+            busdev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (gyroMpuDetectionResult()->sensor == MPU_9250_SPI) {
-            dev->busdev.bustype = BUSTYPE_MPU_SLAVE;
-            busdev->busdev_u.mpuSlave.address = compassConfig()->mag_i2c_address;
-            dev->busdev.busdev_u.mpuSlave.master = gyroSensorBus();
+            busdev->busType = BUS_TYPE_MPU_SLAVE;
+            busdev->busType_u.mpuSlave.address = compassConfig()->mag_i2c_address;
+            busdev->busType_u.mpuSlave.master = gyroSensorBus();
         }
         if (ak8963Detect(dev)) {
 #ifdef MAG_AK8963_ALIGN

@@ -99,11 +99,11 @@ STATIC_UNIT_TESTED void qmp6988_calculate(int32_t *pressure, int32_t *temperatur
 
 void qmp6988BusInit(busDevice_t *busdev) {
 #ifdef USE_BARO_SPI_QMP6988
-    if (busdev->bustype == BUSTYPE_SPI) {
-        IOHi(busdev->busdev_u.spi.csnPin);
-        IOInit(busdev->busdev_u.spi.csnPin, OWNER_BARO_CS, 0);
-        IOConfigGPIO(busdev->busdev_u.spi.csnPin, IOCFG_OUT_PP);
-        spiSetDivisor(busdev->busdev_u.spi.instance, SPI_CLOCK_STANDARD);
+    if (busdev->busType == BUS_TYPE_SPI) {
+        IOHi(busdev->busType_u.spi.csnPin);
+        IOInit(busdev->busType_u.spi.csnPin, OWNER_BARO_CS, 0);
+        IOConfigGPIO(busdev->busType_u.spi.csnPin, IOCFG_OUT_PP);
+        spiSetDivisor(busdev->busType_u.spi.instance, SPI_CLOCK_STANDARD);
     }
 #else
     UNUSED(busdev);
@@ -112,10 +112,10 @@ void qmp6988BusInit(busDevice_t *busdev) {
 
 void qmp6988BusDeinit(busDevice_t *busdev) {
 #ifdef USE_BARO_SPI_QMP6988
-    if (busdev->bustype == BUSTYPE_SPI) {
-        IOConfigGPIO(busdev->busdev_u.spi.csnPin, IOCFG_IPU);
-        IORelease(busdev->busdev_u.spi.csnPin);
-        IOInit(busdev->busdev_u.spi.csnPin, OWNER_SPI_PREINIT, 0);
+    if (busdev->busType == BUS_TYPE_SPI) {
+        IOConfigGPIO(busdev->busType_u.spi.csnPin, IOCFG_IPU);
+        IORelease(busdev->busType_u.spi.csnPin);
+        IOInit(busdev->busType_u.spi.csnPin, OWNER_SPI_PREINIT, 0);
     }
 #else
     UNUSED(busdev);
@@ -139,18 +139,18 @@ bool qmp6988Detect(baroDev_t *baro) {
     uint16_t lb = 0, hb = 0;
     uint32_t lw = 0, hw = 0, temp1, temp2;
     delay(20);
-    busDevice_t *busdev = &baro->busdev;
+    busDevice_t *busdev = &baro->dev;
     bool defaultAddressApplied = false;
     qmp6988BusInit(busdev);
-    if ((busdev->bustype == BUSTYPE_I2C) && (busdev->busdev_u.i2c.address == 0)) {
-        busdev->busdev_u.i2c.address = QMP6988_I2C_ADDR;
+    if ((busdev->busType == BUS_TYPE_I2C) && (busdev->busType_u.i2c.address == 0)) {
+        busdev->busType_u.i2c.address = QMP6988_I2C_ADDR;
         defaultAddressApplied = true;
     }
     busReadRegisterBuffer(busdev, QMP6988_CHIP_ID_REG, &qmp6988_chip_id, 1);  /* read Chip Id */
     if (qmp6988_chip_id != QMP6988_DEFAULT_CHIP_ID) {
         qmp6988BusDeinit(busdev);
         if (defaultAddressApplied) {
-            busdev->busdev_u.i2c.address = 0;
+            busdev->busType_u.i2c.address = 0;
         }
         return false;
     }
@@ -246,13 +246,13 @@ static void qmp6988_get_ut(baroDev_t *baro) {
 
 static void qmp6988_start_up(baroDev_t *baro) {
     // start measurement
-    busWriteRegister(&baro->busdev, QMP6988_CTRL_MEAS_REG, QMP6988_PWR_SAMPLE_MODE);
+    busWriteRegister(&baro->dev, QMP6988_CTRL_MEAS_REG, QMP6988_PWR_SAMPLE_MODE);
 }
 
 static void qmp6988_get_up(baroDev_t *baro) {
     uint8_t data[QMP6988_DATA_FRAME_SIZE];
     // read data from sensor
-    busReadRegisterBuffer(&baro->busdev, QMP6988_PRESSURE_MSB_REG, data, QMP6988_DATA_FRAME_SIZE);
+    busReadRegisterBuffer(&baro->dev, QMP6988_PRESSURE_MSB_REG, data, QMP6988_DATA_FRAME_SIZE);
     qmp6988_up = (int32_t)((((uint32_t)(data[0])) << 16) | (((uint32_t)(data[1])) << 8) | ((uint32_t)data[2] ));
     qmp6988_ut = (int32_t)((((uint32_t)(data[3])) << 16) | (((uint32_t)(data[4])) << 8) | ((uint32_t)data[5]));
 }
