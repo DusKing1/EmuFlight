@@ -42,6 +42,19 @@
 
 FAST_RAM_ZERO_INIT spiDevice_t spiDevice[SPIDEV_COUNT];
 
+// Bus-abstraction layer: one busDevice_t per SPI peripheral. Shared by every
+// extDevice_t that uses this bus. Populated by spiInit() on successful init
+// of each SPI peripheral. Not statically initialised — zero-init is fine
+// because unused slots stay BUS_TYPE_NONE.
+FAST_RAM_ZERO_INIT static busDevice_t spiBusDevice[SPIDEV_COUNT];
+
+busDevice_t *spiBusByDevice(SPIDevice device) {
+    if (device == SPIINVALID || device >= SPIDEV_COUNT) {
+        return NULL;
+    }
+    return &spiBusDevice[device];
+}
+
 SPIDevice spiDeviceByInstance(SPI_TypeDef *instance) {
 #ifdef USE_SPI_DEVICE_1
     if (instance == SPI1)
@@ -70,39 +83,50 @@ SPI_TypeDef *spiInstanceByDevice(SPIDevice device) {
 }
 
 bool spiInit(SPIDevice device) {
+    bool ok = false;
     switch (device) {
     case SPIINVALID:
         return false;
     case SPIDEV_1:
 #ifdef USE_SPI_DEVICE_1
         spiInitDevice(device);
-        return true;
-#else
-        break;
+        ok = true;
 #endif
+        break;
     case SPIDEV_2:
 #ifdef USE_SPI_DEVICE_2
         spiInitDevice(device);
-        return true;
-#else
-        break;
+        ok = true;
 #endif
+        break;
     case SPIDEV_3:
 #if defined(USE_SPI_DEVICE_3) && !defined(STM32F1)
         spiInitDevice(device);
-        return true;
-#else
-        break;
+        ok = true;
 #endif
+        break;
     case SPIDEV_4:
 #if defined(USE_SPI_DEVICE_4)
         spiInitDevice(device);
-        return true;
-#else
-        break;
+        ok = true;
 #endif
+        break;
     }
-    return false;
+    if (ok) {
+        // Populate bus-abstraction resource for this peripheral. Later stages
+        // migrate extDevice_t to dereference dev->bus->busType_u.spi.instance
+        // instead of the per-device inline copy. Route through spiBusByDevice()
+        // so the write shares the read path's bounds check.
+        busDevice_t *bus = spiBusByDevice(device);
+        if (bus) {
+            bus->busType = BUS_TYPE_SPI;
+            bus->busType_u.spi.instance = spiDevice[device].dev;
+#if defined(USE_HAL_DRIVER)
+            bus->busType_u.spi.handle = &spiDevice[device].hspi;
+#endif
+        }
+    }
+    return ok;
 }
 
 uint32_t spiTimeoutUserCallback(SPI_TypeDef *instance) {
@@ -250,6 +274,12 @@ FAST_CODE uint8_t spiReadReg(const extDevice_t *dev, uint8_t reg) {
 void spiBusSetInstance(extDevice_t *dev, SPI_TypeDef *instance) {
     dev->busType = BUS_TYPE_SPI;
     dev->busType_u.spi.instance = instance;
+    // Wire the bus-abstraction back-pointer. spiInit() must have already
+    // populated spiBusDevice[] for this peripheral; if the caller passes an
+    // instance that does not map to a known SPI device, bus stays NULL and
+    // callers that rely on dev->bus will hit a clear null deref at first
+    // use rather than a silent wrong-peripheral access.
+    dev->bus = spiBusByDevice(spiDeviceByInstance(instance));
 }
 
 // icm42688p and bmi270 porting
