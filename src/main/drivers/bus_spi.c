@@ -271,15 +271,38 @@ FAST_CODE uint8_t spiReadReg(const extDevice_t *dev, uint8_t reg) {
 #endif
 }
 
-void spiBusSetInstance(extDevice_t *dev, SPI_TypeDef *instance) {
+// Mark this bus as being SPI given a 1-based CLI device id (BF 4.5-maintenance
+// convention). Validates device range, looks up the SPI_TypeDef via
+// spiInstanceByDevice, and wires both the inline extDevice_t.busType_u.spi
+// fields and the dev->bus back-pointer populated by spiInit().
+bool spiSetBusInstance(extDevice_t *dev, uint32_t device) {
+    if ((device == 0) || (device > SPIDEV_COUNT)) {
+        return false;
+    }
+    SPI_TypeDef *instance = spiInstanceByDevice(SPI_CFG_TO_DEV(device));
+    if (instance == NULL) {
+        return false;
+    }
     dev->busType = BUS_TYPE_SPI;
     dev->busType_u.spi.instance = instance;
-    // Wire the bus-abstraction back-pointer. spiInit() must have already
-    // populated spiBusDevice[] for this peripheral; if the caller passes an
-    // instance that does not map to a known SPI device, bus stays NULL and
-    // callers that rely on dev->bus will hit a clear null deref at first
-    // use rather than a silent wrong-peripheral access.
-    dev->bus = spiBusByDevice(spiDeviceByInstance(instance));
+    dev->bus = spiBusByDevice(SPI_CFG_TO_DEV(device));
+    return true;
+}
+
+void spiBusSetInstance(extDevice_t *dev, SPI_TypeDef *instance) {
+    SPIDevice device = spiDeviceByInstance(instance);
+    if (device != SPIINVALID && spiSetBusInstance(dev, SPI_DEV_TO_CFG(device))) {
+        return;
+    }
+    // Forwarding failed: either the instance does not map to a known SPI
+    // peripheral (e.g. target.h references SPI1 but USE_SPI_DEVICE_1 is
+    // disabled) or spiSetBusInstance rejected the device id. Preserve
+    // pre-Stage-L behaviour: set busType and cache the inline instance
+    // pointer; clear dev->bus so Stage I.3+ code that dereferences it
+    // hits a clean null deref rather than a silent stale-bus access.
+    dev->busType = BUS_TYPE_SPI;
+    dev->busType_u.spi.instance = instance;
+    dev->bus = NULL;
 }
 
 // icm42688p and bmi270 porting
