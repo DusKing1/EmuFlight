@@ -29,6 +29,7 @@
 #include "drivers/bus.h"
 #include "drivers/bus_spi.h"
 #include "drivers/bus_spi_impl.h"
+#include "drivers/dma.h"
 #include "drivers/exti.h"
 #include "drivers/io.h"
 #include "drivers/rcc.h"
@@ -152,6 +153,15 @@ bool spiTransfer(SPI_TypeDef *instance, const uint8_t *txData, uint8_t *rxData, 
     }
     return true;
 }
+
+// Platform-internal DMA functions — stubs for Stage M.1.
+// Stage M.3 will provide full implementations once dma_reqmap is ported.
+void spiSequenceStart(const extDevice_t *dev) { UNUSED(dev); }
+void spiInternalInitStream(const extDevice_t *dev, bool preInit) { UNUSED(dev); UNUSED(preInit); }
+void spiInternalStartDMA(const extDevice_t *dev) { UNUSED(dev); }
+void spiInternalStopDMA(const extDevice_t *dev) { UNUSED(dev); }
+void spiInternalResetStream(dmaChannelDescriptor_t *descriptor) { UNUSED(descriptor); }
+void spiInternalResetDescriptors(busDevice_t *bus) { UNUSED(bus); }
 
 void spiSetDivisor(SPI_TypeDef *instance, uint16_t divisor) {
 #define BR_BITS ((BIT(5) | BIT(4) | BIT(3)))

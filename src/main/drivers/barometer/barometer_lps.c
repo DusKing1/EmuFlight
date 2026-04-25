@@ -190,17 +190,19 @@ static uint32_t rawP = 0;
 static uint16_t rawT = 0;
 
 bool lpsWriteCommand(extDevice_t *dev, uint8_t cmd, uint8_t byte) {
-    return spiWriteReg(dev, cmd, byte);
+    spiWriteReg(dev, cmd, byte);
+    return true;
 }
 
 bool lpsReadCommand(extDevice_t *dev, uint8_t cmd, uint8_t *data, uint8_t len) {
-    return spiReadRegBuf(dev, cmd | 0x80 | 0x40, data, len);
+    spiReadRegBuf(dev, cmd | 0x80 | 0x40, data, len);
+    return true;
 }
 
 bool lpsWriteVerify(extDevice_t *dev, uint8_t cmd, uint8_t byte) {
     uint8_t temp = 0xff;
     spiWriteReg(dev, cmd, byte);
-    spiReadRegBuf(dev, cmd, &temp, 1);
+    spiReadRegBuf(dev, cmd | 0x80, &temp, 1);
     if (byte == temp) return true;
     return false;
 }
