@@ -141,7 +141,6 @@ bool compassDetect(magDev_t *dev) {
 #if defined(USE_MAG_AK8963) && (defined(USE_GYRO_SPI_MPU6500) || defined(USE_GYRO_SPI_MPU9250))
     case BUS_TYPE_MPU_SLAVE: {
         if (gyroMpuDetectionResult()->sensor == MPU_9250_SPI) {
-            extDev->busType = BUS_TYPE_MPU_SLAVE;
             extDev->busType_u.mpuSlave.master = gyroSensorBus();
             extDev->busType_u.mpuSlave.address = compassConfig()->mag_i2c_address;
             extDev->bus->busType = BUS_TYPE_MPU_SLAVE;
@@ -161,7 +160,7 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_HMC5883:
 #if defined(USE_MAG_HMC5883) || defined(USE_MAG_SPI_HMC5883)
-        if (extDev->busType == BUS_TYPE_I2C) {
+        if (extDev->bus->busType == BUS_TYPE_I2C) {
             extDev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (hmc5883lDetect(dev)) {
@@ -175,7 +174,7 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_QMC5883:
 #ifdef USE_MAG_QMC5883
-        if (extDev->busType == BUS_TYPE_I2C) {
+        if (extDev->bus->busType == BUS_TYPE_I2C) {
             extDev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (qmc5883lDetect(dev)) {
@@ -189,7 +188,7 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_AK8975:
 #ifdef USE_MAG_AK8975
-        if (extDev->busType == BUS_TYPE_I2C) {
+        if (extDev->bus->busType == BUS_TYPE_I2C) {
             extDev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (ak8975Detect(dev)) {
@@ -203,11 +202,10 @@ bool compassDetect(magDev_t *dev) {
         FALLTHROUGH;
     case MAG_AK8963:
 #if defined(USE_MAG_AK8963) || defined(USE_MAG_SPI_AK8963)
-        if (extDev->busType == BUS_TYPE_I2C) {
+        if (extDev->bus->busType == BUS_TYPE_I2C) {
             extDev->busType_u.i2c.address = compassConfig()->mag_i2c_address;
         }
         if (gyroMpuDetectionResult()->sensor == MPU_9250_SPI) {
-            extDev->busType = BUS_TYPE_MPU_SLAVE;
             extDev->busType_u.mpuSlave.address = compassConfig()->mag_i2c_address;
             extDev->busType_u.mpuSlave.master = gyroSensorBus();
             extDev->bus->busType = BUS_TYPE_MPU_SLAVE;
