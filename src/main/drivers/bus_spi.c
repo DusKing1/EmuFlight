@@ -24,11 +24,29 @@
 
 #include "platform.h"
 
+#include "build/atomic.h"
+
 #ifdef USE_SPI
+
+// Transmit-only DMA path: used when a bus has a Tx DMA channel but no Rx channel.
+// Applicable to F4/F7; not needed on H7/G4 where full-duplex DMA is always available.
+#if defined(STM32F4) || defined(STM32F7)
+#define USE_TX_IRQ_HANDLER
+#endif
+
+// F7 cache-line constants for DMA buffer maintenance (32-byte L1D cache lines on Cortex-M7).
+#ifdef STM32F7
+#define CACHE_LINE_SIZE  32
+#define CACHE_LINE_MASK  (CACHE_LINE_SIZE - 1)
+#endif
 
 #include "drivers/bus.h"
 #include "drivers/bus_spi.h"
 #include "drivers/bus_spi_impl.h"
+#include "drivers/dma.h"
+#include "drivers/dma_reqmap.h"
+#include "drivers/nvic.h"
+#include "drivers/resource.h"
 #include "drivers/exti.h"
 #include "drivers/io.h"
 #include "drivers/rcc.h"
@@ -174,8 +192,180 @@ bool spiSetBusInstance(extDevice_t *dev, uint32_t device) {
     return true;
 }
 
-// Stub: DMA channel allocation requires dma_reqmap infrastructure (Stage M.3).
-void spiInitBusDMA(void) {
+// Shared segment-completion handler called from spiRxIrqHandler / spiTxIrqHandler.
+// Advances the segment list, starts the next DMA transfer, or marks the bus free.
+FAST_CODE static void spiIrqHandler(const extDevice_t *dev)
+{
+    busDevice_t *bus = dev->bus;
+    busSegment_t *nextSegment;
+
+    if (bus->curSegment->callback) {
+        switch (bus->curSegment->callback(dev->callbackArg)) {
+        case BUS_BUSY:
+            bus->curSegment--;
+            spiInternalInitStream(dev, true);
+            break;
+        case BUS_ABORT:
+            nextSegment = (busSegment_t *)bus->curSegment + 1;
+            while (nextSegment->len != 0) {
+                bus->curSegment = nextSegment;
+                nextSegment = (busSegment_t *)bus->curSegment + 1;
+            }
+            break;
+        case BUS_READY:
+        default:
+            break;
+        }
+    }
+
+    nextSegment = (busSegment_t *)bus->curSegment + 1;
+
+    if (nextSegment->len == 0) {
+        if (nextSegment->u.link.dev) {
+            const extDevice_t *nextDev = nextSegment->u.link.dev;
+            busSegment_t *nextSegments = (busSegment_t *)nextSegment->u.link.segments;
+            bus->curSegment = nextSegments;
+            nextSegment->u.link.dev = NULL;
+            nextSegment->u.link.segments = NULL;
+            spiSequenceStart(nextDev);
+        } else {
+            bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
+        }
+    } else {
+        bool negateCS = bus->curSegment->negateCS;
+        bus->curSegment = nextSegment;
+
+        if (bus->initSegment) {
+            spiInternalInitStream(dev, false);
+            bus->initSegment = false;
+        }
+
+        if (negateCS) {
+            IOLo(dev->busType_u.spi.csnPin);
+        }
+
+        spiInternalStartDMA(dev);
+        spiInternalInitStream(dev, true);
+    }
+}
+
+// DMA Rx TC IRQ handler — fires when SPI Rx DMA transfer completes.
+// Negates CS, stops DMA, invalidates cache on F7, then advances the segment list.
+FAST_CODE static void spiRxIrqHandler(dmaChannelDescriptor_t *descriptor)
+{
+    const extDevice_t *dev = (const extDevice_t *)descriptor->userParam;
+
+    if (!dev) {
+        return;
+    }
+
+    busDevice_t *bus = dev->bus;
+
+    if (bus->curSegment->negateCS) {
+        IOHi(dev->busType_u.spi.csnPin);
+    }
+
+    spiInternalStopDMA(dev);
+
+#ifdef STM32F7
+    if (bus->curSegment->u.buffers.rxData) {
+        SCB_InvalidateDCache_by_Addr(
+            (uint32_t *)((uint32_t)bus->curSegment->u.buffers.rxData & ~CACHE_LINE_MASK),
+            (((uint32_t)bus->curSegment->u.buffers.rxData & CACHE_LINE_MASK) +
+              bus->curSegment->len - 1 + CACHE_LINE_SIZE) & ~CACHE_LINE_MASK);
+    }
+#endif
+
+    spiIrqHandler(dev);
+}
+
+#ifdef USE_TX_IRQ_HANDLER
+// DMA Tx TC IRQ handler — used for Tx-only DMA buses (no Rx channel).
+FAST_CODE static void spiTxIrqHandler(dmaChannelDescriptor_t *descriptor)
+{
+    const extDevice_t *dev = (const extDevice_t *)descriptor->userParam;
+
+    if (!dev) {
+        return;
+    }
+
+    busDevice_t *bus = dev->bus;
+
+    spiInternalStopDMA(dev);
+
+    if (bus->curSegment->negateCS) {
+        IOHi(dev->busType_u.spi.csnPin);
+    }
+
+    spiIrqHandler(dev);
+}
+#endif
+
+void spiInitBusDMA(void)
+{
+#if (defined(STM32F4) || defined(STM32F7)) && defined(USE_SPI)
+    for (uint32_t device = 0; device < SPIDEV_COUNT; device++) {
+        busDevice_t *bus = &spiBusDevice[device];
+
+        if (bus->busType != BUS_TYPE_SPI) {
+            continue;
+        }
+
+        dmaIdentifier_e dmaTxIdentifier = DMA_NONE;
+        dmaIdentifier_e dmaRxIdentifier = DMA_NONE;
+
+        for (uint8_t opt = 0; opt < MAX_PERIPHERAL_DMA_OPTIONS; opt++) {
+            const dmaChannelSpec_t *dmaTxChannelSpec = dmaGetChannelSpecByPeripheral(DMA_PERIPH_SPI_SDO, device, opt);
+            if (dmaTxChannelSpec) {
+                dmaTxIdentifier = dmaGetIdentifier((DMA_Stream_TypeDef *)dmaTxChannelSpec->ref);
+                if (!dmaAllocate(dmaTxIdentifier, OWNER_SPI_SDO, device + 1)) {
+                    dmaTxIdentifier = DMA_NONE;
+                    continue;
+                }
+                bus->dmaTx = dmaGetDescriptorByIdentifier(dmaTxIdentifier);
+                bus->dmaTx->stream  = DMA_DEVICE_INDEX(dmaTxIdentifier);
+                bus->dmaTx->channel = dmaTxChannelSpec->channel;
+                dmaEnable(dmaTxIdentifier);
+                break;
+            }
+        }
+
+        for (uint8_t opt = 0; opt < MAX_PERIPHERAL_DMA_OPTIONS; opt++) {
+            const dmaChannelSpec_t *dmaRxChannelSpec = dmaGetChannelSpecByPeripheral(DMA_PERIPH_SPI_SDI, device, opt);
+            if (dmaRxChannelSpec) {
+                dmaRxIdentifier = dmaGetIdentifier((DMA_Stream_TypeDef *)dmaRxChannelSpec->ref);
+                if (!dmaAllocate(dmaRxIdentifier, OWNER_SPI_SDI, device + 1)) {
+                    dmaRxIdentifier = DMA_NONE;
+                    continue;
+                }
+                bus->dmaRx = dmaGetDescriptorByIdentifier(dmaRxIdentifier);
+                bus->dmaRx->stream  = DMA_DEVICE_INDEX(dmaRxIdentifier);
+                bus->dmaRx->channel = dmaRxChannelSpec->channel;
+                dmaEnable(dmaRxIdentifier);
+                break;
+            }
+        }
+
+        if (dmaTxIdentifier && dmaRxIdentifier) {
+            spiInternalResetStream(bus->dmaRx);
+            spiInternalResetStream(bus->dmaTx);
+            spiInternalResetDescriptors(bus);
+            dmaSetHandler(dmaRxIdentifier, spiRxIrqHandler, NVIC_PRIO_SPI_DMA, 0);
+            bus->useDMA = true;
+#ifdef USE_TX_IRQ_HANDLER
+        } else if (dmaTxIdentifier) {
+            bus->dmaRx = (dmaChannelDescriptor_t *)NULL;
+            spiInternalResetStream(bus->dmaTx);
+            spiInternalResetDescriptors(bus);
+            dmaSetHandler(dmaTxIdentifier, spiTxIrqHandler, NVIC_PRIO_SPI_DMA, 0);
+            bus->useDMA = true;
+#endif
+        } else {
+            bus->dmaRx = NULL;
+            bus->dmaTx = NULL;
+        }
+    }
+#endif
 }
 
 bool spiIsBusy(const extDevice_t *dev) {
@@ -243,13 +433,11 @@ void spiLinkSegments(const extDevice_t *dev, busSegment_t *firstSegment, busSegm
 void spiSequence(const extDevice_t *dev, busSegment_t *segments) {
     busDevice_t *bus = dev->bus;
 
-    spiWait(dev);
-
-    bus->curSegment = segments;
-
 #ifdef USE_DMA_SPI_DEVICE
     if (dev->bus->busType_u.spi.instance == USE_DMA_SPI_DEVICE) {
-        // IMUF9001 custom DMA path: only supports single-segment transfers.
+        // IMUF9001 blocking custom DMA — incompatible with non-blocking segment queuing.
+        spiWait(dev);
+        bus->curSegment = segments;
         if (segments[0].len > 0 && segments[1].len == 0) {
             uint8_t *txData = segments[0].u.buffers.txData;
             uint8_t *rxData = segments[0].u.buffers.rxData;
@@ -276,8 +464,47 @@ void spiSequence(const extDevice_t *dev, busSegment_t *segments) {
             bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
             return;
         }
+        spiSequenceStart(dev);
+        return;
     }
 #endif
+
+    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+        if (spiIsBusy(dev)) {
+            busSegment_t *endSegment;
+
+            // Find the last segment of the new transfer
+            for (endSegment = segments; endSegment->len; endSegment++);
+
+            // Safe to discard the volatile qualifier as we're in an atomic block
+            busSegment_t *endCmpSegment = (busSegment_t *)bus->curSegment;
+
+            if (endCmpSegment) {
+                while (true) {
+                    // Find the last segment of the current transfer
+                    for (; endCmpSegment->len; endCmpSegment++);
+
+                    if (endCmpSegment == endSegment) {
+                        // Same segment list queued twice; abort.
+                        return;
+                    }
+
+                    if (endCmpSegment->u.link.dev == NULL) {
+                        break;
+                    } else {
+                        endCmpSegment = (busSegment_t *)endCmpSegment->u.link.segments;
+                    }
+                }
+
+                endCmpSegment->u.link.dev = dev;
+                endCmpSegment->u.link.segments = segments;
+            }
+
+            return;
+        } else {
+            bus->curSegment = segments;
+        }
+    }
 
     spiSequenceStart(dev);
 }
